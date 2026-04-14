@@ -69,7 +69,7 @@ class SardineClawGUI:
             alignment=ft.MainAxisAlignment.START,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,)
 
-        self.model_label = ft.Text(f"模型: {self.agent.model}", size=13, color=ft.Colors.BLACK)
+        self.model_label = ft.Text(f"模型: {self.agent.model}", size=15, color=ft.Colors.BLACK)
 
         info_row = ft.Row(
             [self.avatar_container, name_text, token_row, self.model_label],
@@ -247,7 +247,7 @@ class SardineClawGUI:
         self.model_dropdown = ft.Dropdown(
             options=model_options,
             value=self.models[0]['name'] if self.models else None,
-            width=250,
+            width=200,
             height=40,
             border_radius=20,
             bgcolor=ft.Colors.WHITE,

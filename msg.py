@@ -94,7 +94,7 @@ async def process_bot_message(messages_control: ft.ListView,
                               get_color_by_name_func) -> tuple:
     start_time = time.time()
     message_content = ft.Text("正在思考...", **ClawConst.BUBBLE_BOT_THOUGHT_FONT)
-    model_info = ft.Text(f"{agent_name} · 模型: {agent.model}", size=11, color=ft.Colors.GREY_500, selectable=True)
+    model_info = ft.Text(f"模型: {agent.model}", size=11, color=ft.Colors.GREY_500, selectable=True)
     bubble_column = ft.Column([message_content, model_info], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.START)
     assistant_bubble = ft.Container(content=bubble_column, bgcolor=ft.Colors.WHITE, **ClawConst.BUBBLE_STYLE)
     robot_avatar = get_avatar("assistant", {"color": agent_color, "avatar": ft.Icons.ANDROID})

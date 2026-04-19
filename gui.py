@@ -132,6 +132,7 @@ class SardineClawGUI:
         if self.current_task and not self.current_task.done():
             self.current_task.cancel()
             try:
+                #阻塞,我先睡了，你帮我盯着这个任务(cancel任务)，它什么时候搞定了你再叫醒我。
                 await self.current_task
             except asyncio.CancelledError:
                 pass
@@ -154,11 +155,12 @@ class SardineClawGUI:
         if not clean_input:
             clean_input = user_input
 
+        #新增用户发送的消息到消息队列
         add_message(self.messages, "user", user_input, self.page)
 
         self.current_task = asyncio.create_task(self._run_send(clean_input))
         try:
-            await self.current_task
+            await self.current_task #在这里**卡住**，直到任务完成（或取消）
         except asyncio.CancelledError:
             pass
         finally:

@@ -195,6 +195,7 @@ class SardineClawGUI:
         page = self.page
         page.title = ClawConst.PAGE_STYLE["title"]
         page.theme_mode = ClawConst.PAGE_STYLE["theme_mode"]
+        # 设置页面内容的内边距（单位：像素）
         page.padding = ClawConst.PAGE_STYLE["padding"]
         page.bgcolor = ClawConst.PAGE_STYLE["bgcolor"]
         page.window.width = ClawConst.PAGE_STYLE["width"]
@@ -247,26 +248,30 @@ class SardineClawGUI:
         self.model_dropdown = ft.Dropdown(
             options=model_options,
             value=self.models[0]['name'] if self.models else None,
-            width=200,
-            height=40,
+            width=170,
+            height=30,
             border_radius=20,
             bgcolor=ft.Colors.WHITE,
             on_select=self.on_model_select,
+            text_style=ft.TextStyle(size=13, color=ft.Colors.BLACK),
         )
 
-        # 操作行，垂直居中
-        input_actions = ft.Row(
-            [self.model_dropdown, self.send_button],
-            spacing=8,
-            alignment=ft.MainAxisAlignment.END,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER
-        )
-
-        # 使用 Stack 将操作行悬浮在输入框右下角
+        # 使用 Stack 将两个控件分别悬浮在输入框右下角
         input_with_actions = ft.Stack(
             controls=[
                 self.input_field,
-                ft.Container(content=input_actions, bottom=12, right=10),
+                # 发送按钮：位于最右下角，距离右边缘 10px，下边缘 12px
+                ft.Container(
+                    content=self.send_button,
+                    bottom=12,
+                    right=13,
+                ),
+                # 模型下拉框：位于发送按钮左侧，距离右边缘 = 按钮宽度(42) + 间距(8) + 原右距(10) = 60px
+                ft.Container(
+                    content=self.model_dropdown,
+                    bottom=27,
+                    right=68,
+                ),
             ],
             expand=True,
         )

@@ -10,9 +10,9 @@ class ClawConst:
 
 
     PAGE_STYLE ={                   #窗口配置
-        'title': "AI 助手团队",
+        'title': "AI Friend",
         'theme_mode': ft.ThemeMode.LIGHT,
-        'padding': 0,
+        'padding': 2,
         'bgcolor': ft.Colors.GREY_50,
         'width': 880,
         'height': 800,

@@ -87,28 +87,25 @@ async def process_bot_message(messages_control: ft.ListView,
     messages_control.controls.append(message_row)
     page.update()
 
-
     full_response = ""
+    isFinal=False
     try:
         async for chunk in agent.run_stream(user_input):
-            # if "**最终答案：**" in chunk:
-            #     message_content.value=""
-            #     full_response=""
-            full_response += chunk
-            message_content.value = full_response
-
+            print(chunk, end='', flush=True)
+            if "\n💬 **最终回答**：\n" in chunk:
+                isFinal=True
+                chunk=chunk.replace("💬 **最终回答**：","")
+            if isFinal:
+                full_response += chunk
+                message_content.value = full_response
             if re.search(r'https?://', full_response):
                 spans = parse_text_with_links(full_response, page)
                 new_content = ft.Text(spans=spans, **ClawConst.BUBBLE_BOT_THOUGHT_FONT)
                 bubble_column.controls[0] = new_content
                 message_content = new_content
-
             if any(chunk.endswith(c) for c in ('.', '!', '?', '\n', '\t', ',')):
                 await messages_control.scroll_to(offset=-1, duration=ClawConst.MESSAGES_SCROLL_DURATION)
                 page.update()
-
-
-
     except asyncio.CancelledError:
         message_content.value = "已取消"
         message_content.color = ft.Colors.GREY_500

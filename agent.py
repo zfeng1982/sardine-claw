@@ -4,6 +4,7 @@ import json
 import asyncio
 import subprocess
 import shlex
+import tempfile
 import yaml
 from typing import Dict, List, Any, Optional, AsyncGenerator, Tuple
 from openai import AsyncOpenAI
@@ -40,7 +41,7 @@ class ReActAgent:
         for entry in os.listdir(self.skills_dir):
             if entry not in self.skill_names:
                 continue
-            skill_dir = os.path.join(self.skills_dir, entry)
+            skill_dir = os.path.join(self.skills_dir, entry).replace('\\', '/')
             if not os.path.isdir(skill_dir):
                 continue
             skill_md_path = os.path.join(skill_dir, "SKILL.md")
@@ -88,6 +89,31 @@ class ReActAgent:
             if s['name'] == skill_name:
                 return s['full_content']
         return ""
+
+    def _get_scripts_content(self, skill_dir: str) -> str:
+        """收集 skills/scripts 目录下文件的内容（限制总长度）"""
+        scripts_dir = os.path.join(skill_dir, "scripts")
+        pieces = []
+        total_len = 0
+        MAX_CHARS = 4000
+        if os.path.isdir(scripts_dir):
+            for filename in sorted(os.listdir(scripts_dir)):
+                filepath = os.path.join(scripts_dir, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        if len(content) > 1500:
+                            content = content[:1500] + "\n... (truncated)"
+                        block = f"### {filename}\n```\n{content}\n```\n"
+                        if total_len + len(block) > MAX_CHARS:
+                            pieces.append("### ... (more files omitted due to length)")
+                            break
+                        pieces.append(block)
+                        total_len += len(block)
+                    except Exception:
+                        continue
+        return "\n".join(pieces) if pieces else "（scripts/ 目录为空或不存在）"
 
     async def _generate_plan(self, user_input: str) -> List[Dict[str, str]]:
         """生成任务拆分计划"""
@@ -144,72 +170,249 @@ class ReActAgent:
             return False, f"错误：未找到技能 '{skill_name}' 的工作目录"
         cmd = command.replace("{baseDir}", skill_dir)
         try:
+            print(f"==== cmd:{cmd}")
+            print(f"==== skill_dir:{skill_dir}")
             returncode, output = await asyncio.to_thread(self.command_executor.run_with_code, cmd, cwd=skill_dir)
             return (returncode == 0), output
         except Exception as e:
             return False, f"命令执行异常: {str(e)}"
 
-    async def _execute_step_with_react(self, step: Dict[str, str], step_index: int, total_steps: int,
-                                       raw_output_holder: List[str]) -> AsyncGenerator[str, None]:
-        """单个技能的内部 ReAct 循环，raw_output_holder 用于保存最后一次原始输出"""
-        skill_name = step['skill']
-        initial_command = step['command']
+    async def _postprocess_output(self, skill_name: str, output: str, skill_dir: str) -> str:
+        """
+        让 LLM 阅读技能文档和 scripts/ 内容，自主生成 Bash 脚本处理后处理。
+        返回处理后的输出；如果不需要处理，返回原输出。
+        """
         skill_doc = self._get_skill_doc(skill_name)
         if not skill_doc:
-            yield f"❌ 步骤 {step_index+1} 失败：未找到技能 '{skill_name}' 的文档\n"
+            return output
+
+        scripts_content = self._get_scripts_content(skill_dir)
+        prompt = f"""你是一个智能助手。以下是技能的文档和 scripts/ 目录下的脚本内容，以及执行命令后得到的原始输出。
+
+## 技能文档
+{skill_doc}
+
+## scripts/ 目录文件内容
+{scripts_content}
+
+## 原始输出（前 800 字符）
+{output[:800]}
+
+**任务**：
+判断是否需要对原始输出进行后处理（例如解密、解码、格式转换、数据清洗等）。
+如果需要，请编写一个 **Bash 脚本**，该脚本能够从标准输入读取原始输出，并将处理后的结果输出到标准输出。
+
+你可以：
+- 直接调用 `scripts/` 下的现有脚本（具体命令需从脚本内容推断）。
+- 根据脚本中的函数实现，动态生成一段新代码（Python、Node.js、Shell 等），然后执行它来处理数据。
+- 组合多个命令，必要时创建临时文件（确保执行后清理）。
+
+**要求**：
+- 如果不需要任何处理，只输出 `NOPROCESS`。
+- 否则，输出一个**完整的、可执行的 Bash 脚本**（可以包含多行）。不要添加任何额外解释。
+- 脚本必须能正确处理 stdin 输入，并输出结果到 stdout。
+- 脚本应假设当前工作目录为技能根目录 `{skill_dir}`。
+
+**输出格式**：
+- 不需要处理：`NOPROCESS`
+- 需要处理：直接输出 Bash 脚本内容
+"""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=800
+            )
+            answer = response.choices[0].message.content.strip()
+            if answer == "NOPROCESS":
+                return output
+
+            # 将 LLM 输出的脚本保存为临时文件并执行
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                f.write("#!/bin/bash\n")
+                f.write(answer)
+                script_path = f.name
+            os.chmod(script_path, 0o700)
+
+            proc = await asyncio.create_subprocess_exec(
+                script_path,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=skill_dir
+            )
+            stdout, stderr = await proc.communicate(input=output.encode('utf-8'))
+            if proc.returncode == 0:
+                processed = stdout.decode('utf-8')
+                print("后处理成功")
+                return processed
+            else:
+                print(f"后处理失败: {stderr.decode()}")
+                return output
+        except Exception as e:
+            print(f"后处理异常: {e}")
+            return output
+        finally:
+            try:
+                os.unlink(script_path)
+            except:
+                pass
+
+    async def _validate_result_with_llm(self, skill_name: str, task_description: str, command: str, output: str, skill_dir: str) -> Tuple[bool, Optional[str]]:
+        """
+        让 LLM 参考技能文档和 scripts 内容，判断输出是否达成了任务目标。
+        返回 (是否成功, 如果是失败可选的修正命令)
+        """
+        skill_doc = self._get_skill_doc(skill_name)
+        scripts_content = self._get_scripts_content(skill_dir)
+        output_preview = output[:1000] if len(output) > 1000 else output
+        prompt = f"""你是一个严格的结果验证专家。以下是技能相关信息、执行的命令和输出，请判断是否达成了任务目标。
+
+技能名称：{skill_name}
+技能文档：
+{skill_doc}
+
+scripts/ 目录下的脚本内容（供参考，可能包含解密/处理逻辑）：
+{scripts_content}
+
+任务描述：{task_description}
+执行的命令：{command}
+命令输出（前1000字符）：
+{output_preview}
+
+判断标准（按优先级）：
+1. **可读性**：输出是否是人类可读的明文，而不是乱码、Base64 长串、明显加密的数据？如果是加密或乱码，认定为失败。
+2. **格式符合性**：输出格式是否符合技能文档中描述的预期格式（例如 JSON、纯文本表格等）？如果不符合，认定为失败。
+3. **内容完整性**：输出是否包含了任务描述中要求的关键信息？例如查询天气应有温度、天气状况；查询热点应有标题和热度；搜索图片应有图片链接等。关键信息缺失则失败。
+4. **错误状态**：如果命令执行失败（返回错误信息、返回码非0），认定为失败。
+5. **后处理需求**：如果输出看起来需要进一步处理（例如文档中明确提到“需要对字段解密”，且脚本中提供了解密函数），则认定为失败，并应建议执行解密/处理命令。
+
+请严格按照以下格式输出：
+- 如果成功：只输出 "SUCCESS"
+- 如果失败：输出 "FAILED: 原因" （简要说明原因），然后另起一行，如果可能，给出修正建议的命令，格式为：
+  Action: execute_command
+  Action Input: {{"command": "修正后的完整命令"}}
+
+示例：
+成功：SUCCESS
+失败：FAILED: 输出为加密乱码，需要解密。
+Action: execute_command
+Action Input: {{"command": "python3 scripts/tool.py xor_decrypt"}}
+失败：FAILED: 返回空结果，可能参数错误。
+Action: execute_command
+Action Input: {{"command": "curl 'http://119.29.63.139/xhs/get_hot_topic?page=1'"}}
+
+只输出上述格式，不要添加额外解释。
+"""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                max_tokens=ClawConst.MODEL_MAX_TOKENS
+            )
+            if response.usage:
+                self.total_prompt_tokens += response.usage.prompt_tokens
+                self.total_completion_tokens += response.usage.completion_tokens
+                self.total_tokens += response.usage.total_tokens
+
+            answer = response.choices[0].message.content.strip().lower()
+            if answer.startswith("success"):
+                return True, None
+            else:
+                # 尝试提取修正命令
+                match = re.search(r'Action:\s*execute_command\s+Action Input:\s*({.*?})', answer, re.IGNORECASE | re.DOTALL)
+                if match:
+                    try:
+                        cmd_json = json.loads(match.group(1))
+                        new_cmd = cmd_json.get("command")
+                        return False, new_cmd
+                    except:
+                        pass
+                return False, None
+        except Exception as e:
+            print(f"LLM 验证失败: {e}")
+            return False, None
+
+    async def _execute_step_with_react(self, step: Dict[str, str], step_index: int, total_steps: int,
+                                       raw_output_holder: List[str]) -> AsyncGenerator[str, None]:
+        skill_name = step['skill']
+        initial_command = step['command']
+        task_description = step.get('description', initial_command)
+        skill_doc = self._get_skill_doc(skill_name)
+        skill_dir = None
+        for s in self.skills:
+            if s['name'] == skill_name:
+                skill_dir = s['skill_dir']
+                break
+        if not skill_doc or not skill_dir:
+            yield f"❌ 步骤 {step_index+1} 失败：未找到技能 '{skill_name}' 的文档或目录\n"
             raw_output_holder[0] = ""
             return
 
         react_prompt = ClawConst.STEP_REACT_PROMPT.format(
             skill_name=skill_name,
             skill_doc=skill_doc,
-            task_description=f"初始命令: {initial_command}",
+            task_description=f"任务: {task_description}\n初始命令: {initial_command}",
             max_steps=ClawConst.ACT_MAX_STEPS
         )
         messages = [
             {"role": "system", "content": react_prompt},
-            {"role": "user", "content": f"任务目标：{initial_command}\n请开始执行，使用 ReAct 格式输出。"}
+            {"role": "user", "content": f"请执行任务并遵循 ReAct 格式。任务目标：{task_description}\n初始命令：{initial_command}"}
         ]
 
         current_command = initial_command
         for attempt in range(ClawConst.ACT_MAX_STEPS):
             yield f"🔄 尝试 {attempt+1}/{ClawConst.ACT_MAX_STEPS}: 执行命令 `{current_command}`\n"
             success, obs = await self._execute_command(skill_name, current_command)
-            raw_output_holder[0] = obs   # 保存原始输出
-            yield f"📋 观察结果:\n```\n{obs}\n```\n"
+            raw_output_holder[0] = obs
 
-            if success:
-                yield f"✅ 步骤 {step_index+1} 执行成功\n\n"
+            processed_obs=obs
+            # # 后处理（如果需要）
+            # processed_obs = await self._postprocess_output(skill_name, obs, skill_dir)
+            # if processed_obs != obs:
+            #     yield f"🔧 后处理完成\n"
+
+            yield f"📋 观察结果:\n```\n{processed_obs}\n```\n"
+            yield f"🤔 正在验证结果是否符合预期...\n"
+
+            is_good, new_cmd = await self._validate_result_with_llm(skill_name, task_description, current_command, processed_obs, skill_dir)
+            if is_good:
+                yield f"✅ 步骤 {step_index+1} 执行成功（LLM 确认结果有效）\n\n"
+                raw_output_holder[0] = processed_obs  # 使用处理后的输出作为最终结果
                 return
 
             if attempt < ClawConst.ACT_MAX_STEPS - 1:
-                yield f"🤔 命令执行失败，请求 LLM 修正...\n"
-                messages.append({"role": "assistant", "content": f"Action: execute_command\nAction Input: {json.dumps({'command': current_command})}"})
-                messages.append({"role": "user", "content": f"Observation: {obs}\n失败。请给出修正后的命令或输出 Final Answer。"})
-
-                try:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        temperature=ClawConst.MODEL_TEMPERATURE,
-                        max_tokens=ClawConst.MODEL_MAX_TOKENS
-                    )
-                    if response.usage:
-                        self.total_prompt_tokens += response.usage.prompt_tokens
-                        self.total_completion_tokens += response.usage.completion_tokens
-                        self.total_tokens += response.usage.total_tokens
-
-                    llm_output = response.choices[0].message.content.strip()
-                    yield f"💡 LLM 建议:\n{llm_output}\n"
-                    new_cmd = self._parse_command_from_llm(llm_output)
-                    if new_cmd:
-                        current_command = new_cmd
-                    else:
-                        yield f"⚠️ 无法解析新命令，保留原命令\n"
-                except Exception as e:
-                    yield f"❌ LLM 调用失败: {str(e)}\n"
+                if new_cmd:
+                    current_command = new_cmd
+                    yield f"💡 LLM 建议修正命令: {new_cmd}\n"
+                else:
+                    yield f"⚠️ 结果未达标，请求 LLM 生成修正命令...\n"
+                    messages.append({"role": "assistant", "content": f"Action: execute_command\nAction Input: {json.dumps({'command': current_command})}"})
+                    messages.append({"role": "user", "content": f"Observation: {processed_obs}\n上述结果不符合任务目标，请给出修正后的命令或输出 Final Answer 终止任务。"})
+                    try:
+                        response = await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            temperature=ClawConst.MODEL_TEMPERATURE,
+                            max_tokens=ClawConst.MODEL_MAX_TOKENS
+                        )
+                        if response.usage:
+                            self.total_prompt_tokens += response.usage.prompt_tokens
+                            self.total_completion_tokens += response.usage.completion_tokens
+                            self.total_tokens += response.usage.total_tokens
+                        llm_output = response.choices[0].message.content.strip()
+                        yield f"💡 LLM 建议:\n{llm_output}\n"
+                        new_cmd = self._parse_command_from_llm(llm_output)
+                        if new_cmd:
+                            current_command = new_cmd
+                        else:
+                            yield f"⚠️ 无法解析新命令，将重试原命令\n"
+                    except Exception as e:
+                        yield f"❌ LLM 调用失败: {str(e)}\n"
             else:
-                yield f"❌ 步骤 {step_index+1} 在 {ClawConst.ACT_MAX_STEPS} 次尝试后失败\n"
+                yield f"❌ 步骤 {step_index+1} 在 {ClawConst.ACT_MAX_STEPS} 次尝试后仍未达成目标，放弃。\n"
                 return
 
         yield f"❌ 步骤 {step_index+1} 最终失败\n"
@@ -217,7 +420,7 @@ class ReActAgent:
     def _parse_command_from_llm(self, text: str) -> Optional[str]:
         """从 LLM 输出中提取命令字符串"""
         # 尝试 JSON 格式
-        match = re.search(r'Action:\s*execute_command', text)
+        match = re.search(r'Action:\s*execute_command', text, re.IGNORECASE)
         if match:
             idx = text.find("Action Input:")
             if idx != -1:
@@ -230,15 +433,14 @@ class ReActAgent:
                                 return data["command"]
                         except:
                             continue
-        # 尝试直接解析命令
         lines = text.splitlines()
         for line in lines:
             line = line.strip()
-            if line.startswith("execute_command"):
+            if line.lower().startswith("execute_command"):
                 parts = line.split(maxsplit=1)
                 if len(parts) > 1:
                     return parts[1]
-            elif line.startswith("Action Input:"):
+            elif line.lower().startswith("action input:"):
                 parts = line.split(maxsplit=2)
                 if len(parts) > 2:
                     return parts[2]
@@ -324,8 +526,17 @@ class ReActAgent:
 class CommandExecutor:
     def run_with_code(self, command: str, cwd: str = None) -> Tuple[int, str]:
         try:
-            cmd_list = shlex.split(command)
-            result = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=False, timeout=30)
+            # Windows 上推荐使用 shell=True 避免分割问题，但需注意命令注入风险（可接受，因来自 LLM）。
+            # 若需保留列表形式，可改为：
+            # cmd_list = shlex.split(command, posix=False)  # Windows 模式
+            result = subprocess.run(
+                command,
+                shell=True,  # 让系统解释器处理命令，避免分割错误
+                cwd=cwd,
+                capture_output=True,
+                text=False,
+                timeout=30
+            )
 
             def decode(b: bytes) -> str:
                 if not b:
@@ -333,16 +544,23 @@ class CommandExecutor:
                 for enc in ['utf-8', 'gbk', 'cp936', 'latin1']:
                     try:
                         return b.decode(enc)
-                    except:
+                    except UnicodeDecodeError:
                         continue
-                return b.decode('utf-8', errors='ignore')
+                # 最终降级，用替换符代替无法解码的字节
+                return b.decode('utf-8', errors='replace')
 
             out = decode(result.stdout)
             err = decode(result.stderr)
+
             if result.returncode == 0:
-                return result.returncode, out.strip() or "命令执行成功（无输出）"
+                output = out.strip() or "命令执行成功（无输出）"
+                return result.returncode, output
             else:
-                return result.returncode, f"命令执行失败 (返回码 {result.returncode}):\n{err.strip() or out.strip()}"
+                # 优先使用 stderr，其次使用 stdout
+                error_details = err.strip() or out.strip()
+                if not error_details:
+                    error_details = f"无任何输出信息。返回码 {result.returncode}"
+                return result.returncode, f"命令执行失败 (返回码 {result.returncode}):\n{error_details}"
         except subprocess.TimeoutExpired:
             return -1, "命令执行超时"
         except Exception as e:

@@ -3,7 +3,7 @@ import flet as ft
 class ClawConst:
     BOT_MAX_COUNT = 5
     ACT_END = "|oneactstepend|"
-    ACT_MAX_STEPS = 5                     # 每个技能内部最大尝试次数
+    ACT_MAX_STEPS = 50                    # 每个技能内部最大尝试次数
 
     MODEL_MAX_TOKENS = 8000
     MODEL_TEMPERATURE = 0.7
@@ -13,8 +13,8 @@ class ClawConst:
         'theme_mode': ft.ThemeMode.LIGHT,
         'padding': 2,
         'bgcolor': ft.Colors.GREY_50,
-        'width': 1080,
-        'height': 1000,
+        'width': 880,
+        'height': 800,
         'resizable': False,
     }
 

@@ -95,9 +95,13 @@ async def process_bot_message(messages_control: ft.ListView,
             if "\n💬 **最终回答**：\n" in chunk:
                 isFinal=True
                 chunk=chunk.replace("💬 **最终回答**：","")
+                message_content.value=""
+                page.update()
+
             if isFinal:
                 full_response += chunk
                 message_content.value = full_response
+
             if re.search(r'https?://', full_response):
                 spans = parse_text_with_links(full_response, page)
                 new_content = ft.Text(spans=spans, **ClawConst.BUBBLE_BOT_THOUGHT_FONT)

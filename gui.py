@@ -129,38 +129,39 @@ class SardineClawGUI:
         asyncio.create_task(self.switch_model_by_name(selected))
 
     async def send_click(self, e):
-        if self.current_task and not self.current_task.done():
-            self.current_task.cancel()
-            try:
-                #阻塞,我先睡了，你帮我盯着这个任务(cancel任务)，它什么时候搞定了你再叫醒我。
-                await self.current_task
-            except asyncio.CancelledError:
-                pass
-            self.current_task = None
-            self.send_button.content = ft.Icon(ft.Icons.SEND_ROUNDED, color=ft.Colors.WHITE, size=20)
-            self.input_field.disabled = False
-            self.page.update()
-            return
-
-        user_input = self.input_field.value.strip()
-        if not user_input:
-            return
-
-        self.input_field.disabled = True
-        self.send_button.content = ft.Icon(ft.Icons.STOP, color=ft.Colors.WHITE, size=20)
-        self.input_field.value = ""
-        self.page.update()
-
-        clean_input = re.sub(r'@\S+\s?', '', user_input).strip()
-        if not clean_input:
-            clean_input = user_input
-
-        #新增用户发送的消息到消息队列
-        add_message(self.messages, "user", user_input, self.page)
-
-        self.current_task = asyncio.create_task(self._run_send(clean_input))
         try:
-            await self.current_task #在这里**卡住**，直到任务完成（或取消）
+            #如果还有任务在执行,这时按的是消取任务键
+            if self.current_task and not self.current_task.done():
+                self.current_task.cancel()
+                try:
+                    # 阻塞,我先睡了，你帮我盯着这个任务(cancel任务)，它什么时候搞定了你再叫醒我。
+                    await self.current_task
+                except asyncio.CancelledError:
+                    pass
+                # 关键：无论如何都返回，不执行后续发送代码
+                return
+
+            #用户如果输入的是空直接返回吧
+            user_input = self.input_field.value.strip()
+            if not user_input:
+                return
+
+            #输入框不可用
+            self.input_field.disabled = True
+            self.send_button.content = ft.Icon(ft.Icons.STOP, color=ft.Colors.WHITE, size=20)
+            self.input_field.value = ""
+
+            #清理一下@符号吧,对AI比较友好
+            clean_input = re.sub(r'@\S+\s?', '', user_input).strip()
+            if not clean_input:
+                clean_input = user_input
+
+            #新增用户发送的消息到消息队列
+            add_message(self.messages, "user", user_input, self.page)
+            #_run_send方法开始就是AI真正开始运行了
+            self.current_task = asyncio.create_task(self._run_send(clean_input))
+
+            await self.current_task #在这里卡住，直到任务完成（或取消）
         except asyncio.CancelledError:
             pass
         finally:

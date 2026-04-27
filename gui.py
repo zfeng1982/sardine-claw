@@ -5,7 +5,7 @@ import tkinter as tk
 from typing import Optional, List, Dict, Any
 import flet as ft
 from agent import ReActAgent
-from msg import add_message, get_avatar, parse_text_with_links, process_bot_message, get_color_by_name
+from msg import add_message, process_bot_message
 from const import ClawConst
 
 
@@ -35,26 +35,9 @@ class SardineClawGUI:
         self.breathing_task: Optional[asyncio.Task] = None
         self.model_label: Optional[ft.Text] = None
 
-    async def breathe(self, container: ft.Container, base_color: str, period: float = 2.0):
-        original_bg = container.bgcolor
-        try:
-            start_time = asyncio.get_event_loop().time()
-            while True:
-                now = asyncio.get_event_loop().time()
-                elapsed = (now - start_time) % period
-                alpha = 0.1 + 0.3 * (0.5 + 0.5 * math.sin(2 * math.pi * elapsed / period))
-                color_with_alpha = ft.Colors.with_opacity(alpha, base_color)
-                container.bgcolor = color_with_alpha
-                self.page.update()
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            container.bgcolor = original_bg
-            self.page.update()
-            raise
-
     def build_agent_info(self):
         avatar = ft.CircleAvatar(
-            bgcolor=get_color_by_name(self.agent_color),
+            bgcolor= ft.Colors.BLUE,
             content=ft.Icon(ft.Icons.ANDROID if self.agent_icon == "android" else ft.Icons.SMART_TOY,
                             color=ft.Colors.WHITE, size=18),
             radius=20,
@@ -152,14 +135,13 @@ class SardineClawGUI:
             self.input_field.value = ""
 
             #清理一下@符号吧,对AI比较友好
-            clean_input = re.sub(r'@\S+\s?', '', user_input).strip()
-            if not clean_input:
-                clean_input = user_input
+            user_input = re.sub(r'@\S+\s?', '', user_input).strip()
+
 
             #新增用户发送的消息到消息队列
             add_message(self.messages, "user", user_input, self.page)
             #_run_send方法开始就是AI真正开始运行了
-            self.current_task = asyncio.create_task(self._run_send(clean_input))
+            self.current_task = asyncio.create_task(self._run_send(user_input))
 
             await self.current_task #在这里卡住，直到任务完成（或取消）
         except asyncio.CancelledError:
@@ -174,7 +156,7 @@ class SardineClawGUI:
             except:
                 pass
 
-    async def _run_send(self, clean_input: str):
+    async def _run_send(self, user_input: str):
         if not self.avatar_container:
             self.build_agent_info()
 
@@ -183,12 +165,7 @@ class SardineClawGUI:
             messages_control=self.messages,
             page=self.page,
             agent=self.agent,
-            agent_name=self.agent_name,
-            agent_color=self.agent_color,
-            clean_input=clean_input,
-            breathing_container=self.avatar_container,
-            breathe_func=self.breathe,
-            get_color_by_name_func=get_color_by_name
+            user_input=user_input
         )
         self.total_input_tokens += input_tokens
         self.total_output_tokens += output_tokens

@@ -5,16 +5,6 @@ import time
 from const import ClawConst
 from agent import ReActAgent
 
-def get_color_by_name(color_name: str):
-    color_map = {
-        "green": ft.Colors.GREEN,
-        "blue": ft.Colors.BLUE,
-        "purple": ft.Colors.PURPLE,
-        "red": ft.Colors.RED,
-        "orange": ft.Colors.ORANGE,
-        "yellow": ft.Colors.YELLOW,
-    }
-    return color_map.get(color_name.lower(), ft.Colors.GREY)
 
 def parse_text_with_links(text, page):
     url_pattern = r'https?://[^\s]+'
@@ -37,12 +27,12 @@ def parse_text_with_links(text, page):
         spans.append(ft.TextSpan(text[last_end:]))
     return spans
 
-def get_avatar(role, member_info=None):
-    if role == "assistant" and member_info:
-        color = get_color_by_name(member_info.get("color", "grey"))
-        icon = member_info.get("avatar", ft.Icons.ANDROID)
-    else:
+def get_avatar(role):
+    if role == "assistant":
         color = ft.Colors.BLUE
+        icon =  ft.Icons.ANDROID
+    else:
+        color = ft.Colors.GREEN
         icon = ft.Icons.PERSON
     return ft.CircleAvatar(
         bgcolor=color,
@@ -86,36 +76,26 @@ def add_message(messages_control, role: str, content: str, page: ft.Page, member
 async def process_bot_message(messages_control: ft.ListView,
                               page: ft.Page,
                               agent: ReActAgent,
-                              agent_name: str,
-                              agent_color: str,
-                              clean_input: str,
-                              breathing_container: ft.Container,
-                              breathe_func,
-                              get_color_by_name_func) -> tuple:
+                              user_input: str,) -> tuple:
     start_time = time.time()
     message_content = ft.Text("正在思考...", **ClawConst.BUBBLE_BOT_THOUGHT_FONT)
     model_info = ft.Text(f"模型: {agent.model}", size=11, color=ft.Colors.GREY_500, selectable=True)
     bubble_column = ft.Column([message_content, model_info], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.START)
     assistant_bubble = ft.Container(content=bubble_column, bgcolor=ft.Colors.WHITE, **ClawConst.BUBBLE_STYLE)
-    robot_avatar = get_avatar("assistant", {"color": agent_color, "avatar": ft.Icons.ANDROID})
+    robot_avatar = get_avatar("assistant")
     message_row = ft.Container(content=ft.Row([robot_avatar, assistant_bubble], alignment=ft.MainAxisAlignment.START, spacing=10))
     messages_control.controls.append(message_row)
     page.update()
 
-    breathing_task = asyncio.create_task(
-        breathe_func(breathing_container, get_color_by_name_func(agent_color), period=2.0)
-    )
 
     full_response = ""
     try:
-        is_first_chunk = True
-        async for chunk in agent.run_stream(clean_input, ClawConst.ACT_MAX_STEPS):
-            full_response += chunk.replace(ClawConst.ACT_END, "")
-            if is_first_chunk:
-                message_content.value = chunk
-                is_first_chunk = False
-            else:
-                message_content.value = full_response
+        async for chunk in agent.run_stream(user_input):
+            # if "**最终答案：**" in chunk:
+            #     message_content.value=""
+            #     full_response=""
+            full_response += chunk
+            message_content.value = full_response
 
             if re.search(r'https?://', full_response):
                 spans = parse_text_with_links(full_response, page)
@@ -127,13 +107,8 @@ async def process_bot_message(messages_control: ft.ListView,
                 await messages_control.scroll_to(offset=-1, duration=ClawConst.MESSAGES_SCROLL_DURATION)
                 page.update()
 
-            if ClawConst.ACT_END in chunk and "Final Answer:" not in full_response:
-                await asyncio.sleep(2)
-                assistant_bubble.opacity = 0
-                full_response = ""
-                message_content.value = "指令执行中..."
-                assistant_bubble.opacity = 1
-                page.update()
+
+
     except asyncio.CancelledError:
         message_content.value = "已取消"
         message_content.color = ft.Colors.GREY_500
@@ -144,7 +119,7 @@ async def process_bot_message(messages_control: ft.ListView,
         message_content.color = ft.Colors.RED
         page.update()
     finally:
-        breathing_task.cancel()
+        # breathing_task.cancel()
         await messages_control.scroll_to(offset=-1, duration=ClawConst.MESSAGES_SCROLL_DURATION)
         message_content.color = ft.Colors.BLACK
         page.update()
@@ -152,7 +127,7 @@ async def process_bot_message(messages_control: ft.ListView,
     input_tokens = agent.total_prompt_tokens
     output_tokens = agent.total_completion_tokens
     if input_tokens == 0 and output_tokens == 0:
-        input_tokens = max(1, len(clean_input) // 2)
+        input_tokens = max(1, len(user_input) // 2)
         output_tokens = max(1, len(full_response) // 2)
     model_info.value += f" · Token: {input_tokens+output_tokens}"
     elapsed = time.time() - start_time

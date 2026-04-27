@@ -12,7 +12,7 @@ from const import ClawConst
 
 
 class ReActAgent:
-    """实现ReAct机制的Agent，支持指定技能包加载"""
+    """实现 Plan-and-Execute 机制的 Agent，支持多技能协作"""
 
     def __init__(self, api_key: str, base_url: str, model: str,
                  skills_dir: str = "./skills", skill_names: List[str] = None):
@@ -80,44 +80,101 @@ class ReActAgent:
                 return line
         return ""
 
-    async def _select_skill(self, user_input: str) -> Optional[Dict[str, Any]]:
-        if not self.skills:
-            return None
-        skills_desc = "\n".join([f"- {s['name']}: {s['description']}" for s in self.skills])
+    def _build_skills_docs(self) -> str:
+        """构建所有技能的文档字符串，用于计划生成"""
+        docs = []
+        for skill in self.skills:
+            docs.append(f"## 技能名称：{skill['name']}\n{skill['full_content']}\n")
+        return "\n".join(docs)
 
-        select_prompt = ClawConst.SKILL_SELECT_PROMPT.format(user_input=user_input, skills_desc=skills_desc)
+    async def _generate_plan(self, user_input: str) -> List[Dict[str, str]]:
+        """调用 LLM 生成执行计划，返回步骤列表，每步含 skill 和 command"""
+        if not self.skills:
+            return []
+
+        skills_docs = self._build_skills_docs()
+        prompt = ClawConst.PLAN_GENERATION_PROMPT.format(
+            user_input=user_input,
+            skills_docs=skills_docs
+        )
 
         try:
-            print("_select_skill request llm")
             response = await self.client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": select_prompt}],
-                temperature=ClawConst.MODEL_TEMPERATURE, max_tokens=ClawConst.MODEL_MAX_TOKENS
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=ClawConst.MODEL_TEMPERATURE,
+                max_tokens=ClawConst.MODEL_MAX_TOKENS
             )
-            # 累加 token 用量（非流式调用）
+            # 累加 token
             if response.usage:
                 self.total_prompt_tokens += response.usage.prompt_tokens
                 self.total_completion_tokens += response.usage.completion_tokens
                 self.total_tokens += response.usage.total_tokens
 
-            chosen = response.choices[0].message.content.strip()
-            # print(f"{__file__}||response:{response}")
-            print(f"_select_skill response chose:{chosen}")
-            if not chosen or chosen == '' or chosen.lower() == "none":
-                return None
-            for s in self.skills:
-                if chosen.lower() in s['name'].lower():
-                    return s
-            return None
+            content = response.choices[0].message.content.strip()
+            # 提取 JSON（可能被 markdown 包裹）
+            json_match = re.search(r'\{.*\}|\[.*\]', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+            plan_data = json.loads(content)
+            # 支持两种格式：直接列表或 {"plan": [...]}
+            if isinstance(plan_data, dict) and "plan" in plan_data:
+                plan = plan_data["plan"]
+            elif isinstance(plan_data, list):
+                plan = plan_data
+            else:
+                plan = []
+            # 校验每个步骤必须包含 skill 和 command
+            valid_plan = []
+            for step in plan:
+                if isinstance(step, dict) and "skill" in step and "command" in step:
+                    # 确保技能已加载
+                    if any(s['name'] == step['skill'] for s in self.skills):
+                        valid_plan.append(step)
+                    else:
+                        print(f"警告：计划中使用了未加载的技能 '{step['skill']}'，已忽略")
+            return valid_plan
         except Exception as e:
-            print(f"技能选择错误: {e}")
-            return None
+            print(f"计划生成失败: {e}")
+            return []
 
-    def _build_system_prompt_with_skill(self, skill: Dict[str, Any]) -> str:
-        """构建包含完整技能文档的系统提示，并强制规定输出格式"""
-        skill_doc = skill['full_content']
-        return ClawConst.SKILL_DOC_PROMPT.format(skill_name=skill['name'], skill_doc=skill_doc)
+    async def _execute_plan(self, plan: List[Dict[str, str]]) -> List[str]:
+        """执行计划中的每个步骤，返回结果列表"""
+        results = []
+        for step in plan:
+            skill_name = step['skill']
+            command = step['command']
+            # 查找技能目录
+            skill_dir = None
+            for s in self.skills:
+                if s['name'] == skill_name:
+                    skill_dir = s['skill_dir']
+                    break
+            if not skill_dir:
+                results.append(f"错误：未找到技能 '{skill_name}' 的工作目录")
+                continue
 
-    async def _call_llm_stream(self, messages: List[ChatCompletionMessageParam]) -> AsyncGenerator[str, None]:
+            # 替换命令中的占位符（如有）
+            cmd = command.replace("{baseDir}", skill_dir)
+            try:
+                result = await asyncio.to_thread(self.command_executor.run, cmd, cwd=skill_dir)
+                results.append(result if result else "命令执行成功（无输出）")
+            except Exception as e:
+                results.append(f"命令执行失败: {str(e)}")
+        return results
+
+    async def _generate_final_answer(self, user_input: str, plan: List[Dict[str, str]],
+                                     execution_results: List[str]) -> AsyncGenerator[str, None]:
+        """基于用户输入、计划、执行结果，流式生成最终答案"""
+        plan_str = json.dumps(plan, ensure_ascii=False, indent=2)
+        results_str = "\n".join([f"步骤{i+1}: {r}" for i, r in enumerate(execution_results)])
+        prompt = ClawConst.FINAL_ANSWER_PROMPT.format(
+            user_input=user_input,
+            plan=plan_str,
+            execution_results=results_str
+        )
+        messages = [{"role": "user", "content": prompt}]
+
         try:
             stream = await self.client.chat.completions.create(
                 model=self.model,
@@ -125,109 +182,57 @@ class ReActAgent:
                 temperature=ClawConst.MODEL_TEMPERATURE,
                 max_tokens=ClawConst.MODEL_MAX_TOKENS,
                 stream=True,
-                stream_options={"include_usage": True}  # 强制返回 usage
+                stream_options={"include_usage": True}
             )
             usage = None
             async for chunk in stream:
-                # 处理 usage 块（没有 choices）
                 if chunk.usage:
                     usage = chunk.usage
-                    continue  # 这个 chunk 没有内容，跳过
-                # 处理正常内容块
-                if chunk.choices and len(chunk.choices) > 0 and chunk.choices[0].delta.content:
+                    continue
+                if chunk.choices and chunk.choices[0].delta.content:
                     delta = chunk.choices[0].delta.content
                     delta = delta.replace('\\n', '\n').replace('<br>', '\n').replace('\\r\\n', '\n')
                     yield delta
-            # 保存本次调用的 token 用量
             if usage:
                 self._last_prompt_tokens = usage.prompt_tokens
                 self._last_completion_tokens = usage.completion_tokens
                 self._last_total_tokens = usage.total_tokens
-            else:
-                # 降级：如果仍然没有 usage（某些兼容 API 可能不支持），设为 0
-                self._last_prompt_tokens = self._last_completion_tokens = self._last_total_tokens = 0
+                self.total_prompt_tokens += self._last_prompt_tokens
+                self.total_completion_tokens += self._last_completion_tokens
+                self.total_tokens += self._last_total_tokens
         except Exception as e:
-            yield f"LLM调用错误: {str(e)}"
-            self._last_prompt_tokens = self._last_completion_tokens = self._last_total_tokens = 0
+            yield f"生成最终答案失败: {str(e)}"
 
-    async def _parse_action(self, llm_output: str) -> Optional[tuple]:
-        action_match = re.search(r'Action:\s*(\w+)', llm_output)
-        if not action_match:
-            return None
-        idx = llm_output.find("Action Input:")
-        if idx == -1:
-            return None
-        start = llm_output.find('{', idx)
-        if start == -1:
-            return None
-        action_input = None
-        for end in range(len(llm_output), start, -1):
-            try:
-                action_input = json.loads(llm_output[start:end])
-                break
-            except:
-                continue
-        if action_input is None:
-            return None
-        return action_match.group(1), action_input
-
-    async def _execute_action(self, action: str, action_input: Any, skill_dir: str) -> str:
-        if action == "execute_command":
-            cmd = action_input.get("command", "") if isinstance(action_input, dict) else str(action_input)
-            cmd = cmd.replace("{baseDir}", skill_dir)
-            try:
-                result = await asyncio.to_thread(self.command_executor.run, cmd, cwd=skill_dir)
-                return f"Observation: {result}"
-            except Exception as e:
-                return f"Observation: 命令执行失败: {str(e)}"
-        return f"Observation: 未知动作 '{action}'"
-
-    async def run_stream(self, user_input: str, max_steps: int = 5) -> AsyncGenerator[str, None]:
+    async def run_stream(self, user_input: str) -> AsyncGenerator[str, None]:
+        """
+        Plan-and-Execute 主流程：
+        1. 生成计划
+        2. 执行计划中的命令
+        3. 基于执行结果生成最终答案（包含对计划符合性的判断）
+        """
         if not self.skills:
-            yield "抱歉，我还没学习任何技能。"
-            return
-        selected_skill = await self._select_skill(user_input)
-        if not selected_skill:
-            yield "抱歉，我还没有对应的技能。"
+            yield "抱歉，我还没学习任何技能，无法执行任务。"
             return
 
-        system_prompt = self._build_system_prompt_with_skill(selected_skill)
-        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_input}]
-        step = 0
-        while step < max_steps:
-            step_output = ""
-            print(f"step:{step} _call_llm_stream request llm ")
-            async for chunk in self._call_llm_stream(messages):
-                step_output += chunk
-                yield chunk
-            # 累加本次流式调用的 token 用量
-            self.total_prompt_tokens += self._last_prompt_tokens
-            self.total_completion_tokens += self._last_completion_tokens
-            self.total_tokens += self._last_total_tokens
+        # 1. 生成计划
+        yield "📋 **正在分析需求并生成执行计划...**\n\n"
+        plan = await self._generate_plan(user_input)
+        if not plan:
+            yield "未生成有效计划，请检查技能配置或重新描述需求。\n"
+            return
 
-            messages.append({"role": "assistant", "content": step_output})
-            yield f"{ClawConst.ACT_END}"
-            if "\n" not in step_output:
-                print("LLM存在结束后没有换行的情况加了一个换行")
-                yield f"\n"
+        yield f"**执行计划**：\n```json\n{json.dumps(plan, ensure_ascii=False, indent=2)}\n```\n\n"
 
-            if "Final Answer:" in step_output:
-                return
+        # 2. 执行计划 ClawConst.ACT_MAX_STEPS
+        yield "⚙️ **开始执行计划...**\n\n"
+        execution_results = await self._execute_plan(plan)
+        for i, res in enumerate(execution_results):
+            yield f"**步骤 {i+1} 执行结果**：\n```\n{res}\n```\n\n"
 
-            parsed = await self._parse_action(step_output)
-            if parsed:
-                print(f"step:{step} _execute_action:{ parsed[1].get("command", "")}....")
-                obs = await self._execute_action(parsed[0], parsed[1], selected_skill['skill_dir'])
-                print("_execute_action end")
-                # yield f"\n\n[系统] {obs}\n\n"
-                # print(f"[obs]{obs}")
-                messages.append({"role": "user", "content": obs})
-            else:
-                # yield "\n\n[系统] 未能解析动作，请检查输出格式。\n\n"
-                print("[obs]未能解析动作，请检查输出格式。")
-                messages.append({"role": "user", "content": "请按照ReAct格式输出。"})
-
-            step += 1
+        # 3. 生成最终答案（包含对计划符合性的判断）
+        yield "💬 **最终回答**：\n"
+        async for chunk in self._generate_final_answer(user_input, plan, execution_results):
+            yield chunk
 
 
 class CommandExecutor:

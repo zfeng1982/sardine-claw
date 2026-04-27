@@ -94,19 +94,22 @@ async def process_bot_message(messages_control: ft.ListView,
             print(chunk, end='', flush=True)
             if "\n💬 **最终回答**：\n" in chunk:
                 isFinal=True
-                chunk=chunk.replace("💬 **最终回答**：","")
-                message_content.value=""
-                page.update()
+                chunk=chunk.replace("\n💬 **最终回答**：\n","")
+
 
             if isFinal:
                 full_response += chunk
-                message_content.value = full_response
+                if full_response:
+                    message_content.value=full_response
+                    # 不知道为什么智谱可以用join
+                    # message_content.value.join(chunk)
 
             if re.search(r'https?://', full_response):
                 spans = parse_text_with_links(full_response, page)
                 new_content = ft.Text(spans=spans, **ClawConst.BUBBLE_BOT_THOUGHT_FONT)
                 bubble_column.controls[0] = new_content
                 message_content = new_content
+
             if any(chunk.endswith(c) for c in ('.', '!', '?', '\n', '\t', ',')):
                 await messages_control.scroll_to(offset=-1, duration=ClawConst.MESSAGES_SCROLL_DURATION)
                 page.update()

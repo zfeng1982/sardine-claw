@@ -2,7 +2,12 @@
 ## 🎯简介
 - 一个全python的AI Agent项目
 - GUI使用Flet
-- LLM所有能力依赖SKILL技能,不乱跑,不删库,不泄密
+- LLM所有能力依赖SKILL技能.不乱跑,不删库,不泄密
+## 💡 说明
+1. 目前只支持openAPI协议,后面有计划做适配.不做适配的问题是慢,还有像GLM-5-Turbo这种龙虾增强基座模型用不了⚠️ .
+2. Flet为原生GUI,比Electron快.但主要还是我不想搞TypeScript😅.
+3. 为什么不引入langchain/langgraph?
+   -  这两个我个人的理解他们是AI Agent的最佳工程实践.但你要知道他们为什么是最佳,就要知道理解他们为解决什么问题而存在,最好的办法是没有他们.
 
 ## 📂项目目录
 sardine-claw/
@@ -30,13 +35,15 @@ sardine-claw/
     └── requirements.txt                # 项目依赖包列表
 
 ## 📋 开发计划
-1. 支持操作浏览器
-2. 增加长期记忆 
-- 压缩上下文
-- Embedding检索
-- IMA云端RAG
-3. 安全沙箱
-- Daytona/CubeSandBox
+1. 支持操作电脑浏览器
+2. 支持Appium操作手机
+3. 模型适配
+4. 增加长期记忆 
+   - 压缩上下文
+   - Embedding检索
+   - IMA云端RAG
+5. 安全沙箱
+   - Daytona/CubeSandBox
 
 ## 😜絮絮叨叨
 > - 我是写Java和C++的,请原谅我对python的变量命名还带有驼峰命令的习惯

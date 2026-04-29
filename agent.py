@@ -451,7 +451,12 @@ class ReActAgent:
         if not plan:
             yield "❌ 未生成有效计划，请检查技能配置或重新描述需求。\n"
             return
-        yield f"✅ 执行计划生成完成,需要{len(plan)}步\n"
+
+        todolist=""
+        for idx, step in enumerate(plan):
+            todolist=todolist+f"  ➡️ 步骤{idx+1}.使用技能[{step['skill']}]\n"
+
+        yield f"✅ 执行计划生成完成,需要{len(plan)}步\n{todolist}"
         #停顿一下
         time.sleep(10)
         print(f"执行计划：\n```json\n{json.dumps(plan, ensure_ascii=False, indent=2)}\n```\n")

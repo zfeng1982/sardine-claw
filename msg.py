@@ -118,7 +118,7 @@ async def process_bot_message(messages_control: ft.ListView,
                 await messages_control.scroll_to(offset=-1, duration=ClawConst.MESSAGES_SCROLL_DURATION)
                 page.update()
     except asyncio.CancelledError:
-        message_content.value = "已取消"
+        message_content.value = "❌已取消"
         message_content.color = ft.Colors.GREY_500
         model_info.value += " (已取消)"
         page.update()

@@ -31,8 +31,12 @@ sardine-claw/
 
 ## 📋 开发计划
 1. 支持操作浏览器
-2. 增加记忆
+2. 增加长期记忆 
+- 压缩上下文
+- Embedding检索
+- IMA云端RAG
 3. 安全沙箱
+- Daytona/CubeSandBox
 
 ## 😜絮絮叨叨
 > - 我是写Java和C++的,请原谅我对python的变量命名还带有驼峰命令的习惯

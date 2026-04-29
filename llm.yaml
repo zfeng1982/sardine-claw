@@ -1,4 +1,9 @@
 models:
+  - name: "DS-V4-Flash"
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-v4-flash
+
   - name: "智谱GLM-4.7"
     api_key: ${ZHIPU_API_KEY}
     base_url: https://open.bigmodel.cn/api/paas/v4/
@@ -13,3 +18,4 @@ models:
     api_key: ${DEEPSEEK_API_KEY}
     base_url: https://api.deepseek.com/v1
     model: deepseek-v4-pro
+

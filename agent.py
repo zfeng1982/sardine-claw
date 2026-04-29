@@ -297,7 +297,7 @@ class ReActAgent:
                 skill_dir = s['skill_dir']
                 break
         if not skill_doc or not skill_dir:
-            yield f"❌ 步骤 {step_index+1} 失败：未找到技能 '{skill_name}' 的文档或目录"
+            yield f"❌ 步骤 {step_index} 失败：未找到技能 '{skill_name}' 的文档或目录"
             raw_output_holder[0] = ""
             return
 
@@ -322,49 +322,50 @@ class ReActAgent:
             #命令行语法检查提示词
             syntaxCheckPrompt = ClawConst.SYNTAX_CHECK_PROMPT.format(command=current_command)+exehistory
             print(f"===========================================attempt:{attempt}")
+            subStep=f"{step_index}-{attempt+1}."
             # print(f"validateResultprompt---:\n{validateResultprompt}")
-            print(f"syntaxCheckPrompt---:\n{syntaxCheckPrompt}")
-            yield "🤔 CLI语法验证中...\n"
+            print(f"{subStep}syntaxCheckPrompt---:\n{syntaxCheckPrompt}")
+            yield f"🤔 {subStep}CLI语法验证中...\n"
             # LLM对命令进行修改
             syntaxPass,new_cmd  =await self._llm_syntax_check(syntaxCheckPrompt)
 
             if not syntaxPass:
-                yield "❎ CLI验证不通过,修正命令\n"
-                print(f"current_command存在语法错误:{current_command}")
+                yield f"❎ {subStep}CLI验证不通过,修正命令\n"
+                print(f"{subStep}current_command存在语法错误:{current_command}")
                 print(f"             替换成new_cmd:{new_cmd}")
                 current_command=new_cmd
             else:
-                yield "✅ CLI验证通过\n"
+                yield f"✅ {subStep}CLI验证通过\n"
             #手动修改命令
             current_command = self._manual_syntax_check(current_command)
-            print(f"🔄 尝试 {attempt+1}/{ClawConst.ACT_MAX_STEPS}: 执行命令 `{current_command}`\n")
-            yield f"🔄 开始执行CLI...\n"
+            print(f"🔄 {subStep}尝试:执行命令 `{current_command}`\n")
+            yield f"🔄 {subStep}开始执行CLI...\n"
             success, obs = await self._execute_command(skill_name, current_command)
             raw_output_holder[0] = obs
 
-            print(f"📋 观察结果:\n```\n{obs}\n```\n")
-            yield f"🤔 CLI执行完成,LLM正在验证OBS结果是否符合预期...\n"
+            print(f"📋 {subStep}观察结果:\n```\n{obs}\n```\n")
+            yield f"🤔 {subStep}CLI执行完成,LLM正在验证OBS结果是否符合预期...\n"
             exehistory=exehistory+f"\n第{attempt+1}次执行的命令：{current_command}\n命令执行结果：{obs} \n---"
             validateResultprompt=validateResultprompt+f"\n第{attempt+1}次执行的命令：{current_command}\n命令执行结果：{obs} \n---"
 
             is_good, new_cmd = await self._validate_result_with_llm(validateResultprompt)
             if is_good:
-                yield f"✅ 步骤 {step_index+1} 执行成功（LLM 确认结果有效）\n"
+                yield f"✅ 步骤{step_index}执行成功({subStep})\n"
                 raw_output_holder[0] = obs  # 使用处理后的输出作为最终结果
                 return
             else:
-                yield "❎ LLM验证OBS结果不符合预期需要进一步处理\n"
+                yield f"❎ {subStep}LLM验证OBS结果不符合预期需要进一步处理\n"
             if attempt < ClawConst.ACT_MAX_STEPS - 1:
                 if new_cmd:
                     current_command = new_cmd
-                    print( f"💡 LLM 建议进一步处理的CLI: {current_command}\n")
+                    print(f"💡  {subStep}LLM 建议进一步处理的CLI: {current_command}\n")
                 else:
-                    print(f"⚠️ LLM未给出进一步处理的CLI,再次让LLM验证 new_cmd:{new_cmd}\n")
+                    print(f"⚠️ {subStep}LLM未给出进一步处理的CLI,再次让LLM验证 new_cmd:{new_cmd}\n")
             else:
-                yield f"❌ 步骤 {step_index+1} 在 {ClawConst.ACT_MAX_STEPS} 次尝试后仍未达成目标，放弃。\n"
+                yield f"❌ {subStep}在{ClawConst.ACT_MAX_STEPS} 次尝试后仍未达成目标，放弃。\n"
                 return
 
-        yield f"❌ 步骤 {step_index+1} 最终失败\n"
+        yield f"❌ 步骤{step_index}最终失败\n"
 
     # def _parse_command_from_llm(self, text: str) -> Optional[str]:
     #     """从 LLM 输出中提取命令字符串"""
@@ -450,17 +451,19 @@ class ReActAgent:
         if not plan:
             yield "❌ 未生成有效计划，请检查技能配置或重新描述需求。\n"
             return
-        yield f"✅ 执行计划生成完成,共{len(plan)}步\n"
-        print(f"执行计划：\n```json\n{json.dumps(plan, ensure_ascii=False, indent=2)}\n```\n\n")
+        yield f"✅ 执行计划生成完成,需要{len(plan)}步\n"
+        #停顿一下
+        time.sleep(10)
+        print(f"执行计划：\n```json\n{json.dumps(plan, ensure_ascii=False, indent=2)}\n```\n")
 
         # 2. 执行每个步骤
         successes = []
         raw_outputs = []
         for idx, step in enumerate(plan):
-            yield f"## 步骤 {idx+1}/{len(plan)}: {step['skill']} - {step['command'][:20]}..."
+            # yield f"步骤{idx+1}/{len(plan)}: 技能[{step['skill']}] 命令[{step['command'][:35]}...]\n"
             raw_holder = [""]
             step_success = False
-            async for chunk in self._execute_step_with_react(step, idx, len(plan), raw_holder):
+            async for chunk in self._execute_step_with_react(step, idx+1, len(plan), raw_holder):
                 if "✅ 步骤" in chunk and "执行成功" in chunk:
                     step_success = True
                 yield chunk

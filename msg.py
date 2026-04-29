@@ -78,7 +78,7 @@ async def process_bot_message(messages_control: ft.ListView,
                               agent: ReActAgent,
                               user_input: str,) -> tuple:
     start_time = time.time()
-    message_content = ft.Text("正在思考...", **ClawConst.BUBBLE_BOT_THOUGHT_FONT)
+    message_content = ft.Text("正在思考...\n", **ClawConst.BUBBLE_BOT_THOUGHT_FONT)
     model_info = ft.Text(f"模型: {agent.model}", size=11, color=ft.Colors.GREY_500, selectable=True)
     bubble_column = ft.Column([message_content, model_info], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.START)
     assistant_bubble = ft.Container(content=bubble_column, bgcolor=ft.Colors.WHITE, **ClawConst.BUBBLE_STYLE)
@@ -103,6 +103,10 @@ async def process_bot_message(messages_control: ft.ListView,
                     message_content.value=full_response
                     # 不知道为什么智谱可以用join
                     # message_content.value.join(chunk)
+            #执行过程也让用户看一下吧!
+            else:
+                message_content.value = chunk
+                page.update()
 
             if re.search(r'https?://', full_response):
                 spans = parse_text_with_links(full_response, page)

@@ -1,13 +1,15 @@
 models:
-  - name: "智谱 GLM-4-Flash"
+  - name: "智谱GLM-4.7"
     api_key: ${ZHIPU_API_KEY}
     base_url: https://open.bigmodel.cn/api/paas/v4/
-    model: glm-4-flash
-  - name: "glm-5.1"
+    model: GLM-4.7
+
+  - name: "智谱GLM-5.1"
     api_key: ${ZHIPU_API_KEY}
     base_url: https://open.bigmodel.cn/api/paas/v4/
     model: glm-5.1
-  - name: "DeepSeek Chat"
+
+  - name: "DS-V4-Pro"
     api_key: ${DEEPSEEK_API_KEY}
     base_url: https://api.deepseek.com/v1
-    model: deepseek-v4-flash
+    model: deepseek-v4-pro

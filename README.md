@@ -4,7 +4,7 @@
 - GUI使用Flet
 - LLM所有能力依赖SKILL技能,不乱跑,不瞎想
 
-## 📂说明
+## 📂项目目录
 sardine-claw/
 
     ├── skills/                         # 技能/模块目录

@@ -454,7 +454,7 @@ class ReActAgent:
 
         todolist=""
         for idx, step in enumerate(plan):
-            todolist=todolist+f"  ➡️ 步骤{idx+1}.使用技能[{step['skill']}]\n"
+            todolist=todolist+f"➡️ 步骤{idx+1}.使用技能[{step['skill']}]\n"
 
         yield f"✅ 执行计划生成完成,需要{len(plan)}步\n{todolist}"
         #停顿一下

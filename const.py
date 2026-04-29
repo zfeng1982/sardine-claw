@@ -13,8 +13,8 @@ class ClawConst:
         'theme_mode': ft.ThemeMode.LIGHT,
         'padding': 2,
         'bgcolor': ft.Colors.GREY_50,
-        'width': 880,
-        'height': 800,
+        'width': 1100,
+        'height': 950,
         'resizable': False,
     }
 

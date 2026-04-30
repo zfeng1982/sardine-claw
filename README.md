@@ -8,6 +8,7 @@
 2. Flet为原生GUI,比Electron快.但主要还是我不想搞TypeScript😅.
 3. 为什么不引入langchain/langgraph?
    -  这两个我个人的理解他们是AI Agent的最佳工程实践.但你要知道他们为什么是最佳,就要知道他们为解决什么问题而存在,最好的办法是没有他们.
+4. 内置了qqbrowser-skill,老东家老部门的厂品还是支持下
 
 ## 📂项目目录
 sardine-claw/
@@ -36,6 +37,7 @@ sardine-claw/
 
 ## 📋 开发计划
 1. 支持操作电脑浏览器
+   - 2026年4月29号基本调整完成,使用qqbrowser
 2. 支持Appium操作手机
 3. 模型适配
 4. 增加长期记忆 

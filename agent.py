@@ -345,7 +345,9 @@ class ReActAgent:
 
             print(f"📋 {subStep}观察结果:\n```\n{obs}\n```\n")
             yield f"🤔 {subStep}CLI执行完成,LLM正在验证OBS结果是否符合预期...\n"
-            exehistory=exehistory+f"\n第{attempt+1}次执行的命令：{current_command}\n命令执行结果：{obs} \n---"
+            #控制一下obs返回的长度
+            exehistory=exehistory+f"\n第{attempt+1}次执行的命令：{current_command}\n命令执行结果：{obs[:200]} \n---"
+            #验证给过需要使用全部obs数据?
             validateResultprompt=validateResultprompt+f"\n第{attempt+1}次执行的命令：{current_command}\n命令执行结果：{obs} \n---"
 
             is_good, new_cmd = await self._validate_result_with_llm(validateResultprompt)
@@ -454,7 +456,7 @@ class ReActAgent:
 
         todolist=""
         for idx, step in enumerate(plan):
-            todolist=todolist+f"➡️ 步骤{idx+1}.使用技能[{step['skill']}]\n"
+            todolist=todolist+f"➡️ 步骤{idx+1}.使用技能[{step['skill']}] CLI[[{step['command'][:55]}...]\n"
 
         yield f"✅ 执行计划生成完成,需要{len(plan)}步\n{todolist}"
         #停顿一下
